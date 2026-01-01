@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KHELAU TAAS - Animated Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; 
+            color: #c9d1d9; 
+            min-height: 100vh;
+            background-image: radial-gradient(circle at 50% 10%, #1a222c, #0d1117 70%); /* Subtle gradient background */
+        }
+        .card {
+            background-color: #161b22; 
+            border: 1px solid #30363d;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .card:hover {
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.8);
+        }
+        
+        /* General Button Styling */
+        button:not([disabled]) {
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 4px #0f161f;
+        }
+        button:not([disabled]):active {
+            transform: translateY(2px);
+            box-shadow: 0 2px #0f161f;
+        }
+
+        .btn-primary {
+            background-color: #238636;
+            color: white;
+            border: none;
+        }
+        .btn-primary:hover {
+            background-color: #2ea043;
+        }
+        .btn-secondary {
+            background-color: #1f6feb;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background-color: #388bfd;
+        }
+        .btn-suspend {
+            background-color: #c2410c; 
+            color: white;
+        }
+        .btn-suspend:hover {
+            background-color: #ea580c;
+        }
+        
+        .player-score-card {
+            background-color: #0f161f;
+            border-left: 5px solid #388bfd;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            /* Ensure element is ready for animation */
+        }
+        .player-score-card.suspended {
+            opacity: 0.5;
+            border-left: 5px solid #4b5563;
+        }
+        
+        .player-score-card.round-winner-highlight {
+            background-color: #2b2308; 
+            border-left: 5px solid #fde047; 
+            box-shadow: 0 0 15px rgba(252, 211, 77, 0.4);
+            transform: scale(1.01); 
+        }
+        
+        /* --- Custom Mode Toggle Switch --- */
+        .mode-toggle {
+            cursor: pointer;
+            width: 100%;
+            display: flex;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+        .mode-option {
+            flex: 1;
+            padding: 0.75rem;
+            text-align: center;
+            font-weight: 600;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .mode-normal.active {
+            background-color: #238636;
+            color: white;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        .mode-blind.active {
+            background-color: #a855f7;
+            color: white;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        /* --- Custom Notification Animations --- */
+        @keyframes slide-in-top {
+            0% { transform: translate(-50%, -100px); opacity: 0; }
+            100% { transform: translate(-50%, 0); opacity: 1; }
+        }
+
+        @keyframes slide-out-top {
+            0% { transform: translate(-50%, 0); opacity: 1; }
+            100% { transform: translate(-50%, -100px); opacity: 0; }
+        }
+
+        .notification-active {
+            animation: slide-in-top 0.5s forwards;
+        }
+
+        .notification-hidden {
+            animation: slide-out-top 0.5s forwards;
+        }
+    </style>
+    <script>
+        
+        // --- Game State (Local Only) ---
+        const HISTORY_LIMIT = 10; 
+
+        const initialGameState = {
+            baseRate: 10,
+            multiplier: 1,
+            blindMultiplierRate: 5, 
+            showCardRate: 10,       
+            players: [
+                { id: crypto.randomUUID(), name: "Player A", score: 0, status: 'active', wins: 0, losses: 0, raisedBalance: 0, isBlind: false },
+                { id: crypto.randomUUID(), name: "Player B", score: 0, status: 'active', wins: 0, losses: 0, raisedBalance: 0, isBlind: false },
+                { id: crypto.randomUUID(), name: "Player C", score: 0, status: 'active', wins: 0, losses: 0, raisedBalance: 0, isBlind: false },
+            ],
+            mode: 'normal', 
+            history: [],
+            lastWinnerId: null,
+            rankingMode: 'score' 
+        };
+        let gameState = { ...initialGameState };
+
+
+        // --- Core Score Animation Feature ---
+        
+        /**
+         * Animates a numerical element from a start value to an end value.
+         */
+        function animateScore(elementId, start, end, duration = 800) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+
+            const isGain = end > start;
+            
+            // Set initial style immediately
+            element.classList.remove('text-green-400', 'text-red-400', 'text-yellow-400');
+            element.classList.add(isGain ? 'text-green-300' : 'text-red-400', 'font-extrabold', 'transition-none');
+            
+            let startTime = null;
+
+            function step(timestamp) {
+                if (!startTime) startTime = timestamp;
+                const progress = timestamp - startTime;
+                const percentage = Math.min(1, progress / duration);
+                
+                const currentValue = start + (end - start) * percentage;
+                
+                element.textContent = currentValue.toFixed(2);
+                
+                if (percentage < 1) {
+                    window.requestAnimationFrame(step);
+                } else {
+                    // Animation complete: Ensure final value is exact and set final color based on final score
+                    element.textContent = end.toFixed(2);
+                    element.classList.remove('text-green-300', 'text-red-400', 'font-extrabold');
+                    element.classList.add(end >= 0 ? 'text-green-400' : 'text-red-400');
+                }
+            }
+
+            window.requestAnimationFrame(step);
+        }
+        
+        /** * Persists the current state (except for scores which are updated via animation) 
+         * and triggers a re-render of everything *except* the scores.
+         */
+        function saveGameState(state, logToHistory = true) {
+            const previousState = JSON.parse(JSON.stringify(gameState)); 
+
+            if (logToHistory) {
+                if (previousState.history.length >= HISTORY_LIMIT) {
+                    previousState.history.shift(); 
+                }
+                const stateToLog = { 
+                    baseRate: previousState.baseRate,
+                    multiplier: previousState.multiplier,
+                    blindMultiplierRate: previousState.blindMultiplierRate,
+                    showCardRate: previousState.showCardRate,
+                    players: previousState.players.map(p => ({
+                        ...p,
+                        raisedBalance: p.raisedBalance || 0,
+                        isBlind: p.isBlind || false,
+                        wins: p.wins || 0,
+                        losses: p.losses || 0,
+                    })),
+                    mode: previousState.mode,
+                    rankingMode: previousState.rankingMode,
+                };
+                state.history = [...previousState.history, stateToLog];
+            } else {
+                state.history = previousState.history; 
+            }
+            
+            gameState = state; 
+            renderUI(); 
+        }
+        
+        /** Sets the winner ID for the highlight. */
+        function setLastWinner(winnerId) {
+            gameState.lastWinnerId = winnerId;
+            renderUI();
+        }
+        
+        /** Updates the leaderboard sorting mode. */
+        const updateRankingMode = (mode) => {
+            const newState = { ...gameState, rankingMode: mode };
+            saveGameState(newState, false);
+        };
+
+
+        // --- State Manipulation Functions ---
+
+        const updateBaseRate = (rate) => {
+            if (isNaN(rate) || rate < 0) return;
+            const newState = { ...gameState, baseRate: parseFloat(rate) };
+            saveGameState(newState, false); 
+        };
+
+        const updateMultiplier = (multiplier) => {
+            const intValue = parseInt(multiplier, 10);
+            if (isNaN(intValue) || intValue < 1) {
+                const fallbackValue = Math.max(1, gameState.multiplier || 1);
+                const newState = { ...gameState, multiplier: fallbackValue };
+                saveGameState(newState, false);
+                return;
+            }
+            
+            const newState = { ...gameState, multiplier: intValue };
+            saveGameState(newState, false); 
+        };
+        
+        const updateBlindMultiplierRate = (rate) => {
+            const floatValue = parseFloat(rate);
+            if (isNaN(floatValue) || floatValue < 0) return;
+            const newState = { ...gameState, blindMultiplierRate: floatValue };
+            saveGameState(newState, false);
+        };
+
+        const updateShowCardRate = (rate) => {
+            const floatValue = parseFloat(rate);
+            if (isNaN(floatValue) || floatValue < 0) return;
+            const newState = { ...gameState, showCardRate: floatValue };
+            saveGameState(newState, false);
+        };
+
+        const addPlayer = (name) => {
+            if (!name || gameState.players.length >= 10) return;
+            const newPlayer = { 
+                id: crypto.randomUUID(), 
+                name, 
+                score: 0, 
+                status: 'active', 
+                wins: 0, 
+                losses: 0,
+                raisedBalance: 0, 
+                isBlind: gameState.mode === 'blind'
+            };
+            const newState = { ...gameState, players: [...gameState.players, newPlayer] };
+            saveGameState(newState, true); 
+        };
+
+        const removePlayer = (id) => {
+            const newState = { ...gameState, players: gameState.players.filter(p => p.id !== id) };
+            saveGameState(newState, true); 
+        };
+
+        const updatePlayerName = (id, newName) => {
+            const newState = { 
+                ...gameState, 
+                players: gameState.players.map(p =>
+                    p.id === id ? { ...p, name: newName } : p
+                )
+            };
+            saveGameState(newState, false); 
+        };
+        
+        const toggleSuspend = (id) => {
+            const newState = { 
+                ...gameState,
+                players: gameState.players.map(p => {
+                    if (p.id === id) {
+                        return { 
+                            ...p, 
+                            status: p.status === 'active' ? 'suspended' : 'active', 
+                            raisedBalance: 0,
+                            isBlind: p.status === 'active' ? false : (gameState.mode === 'blind') 
+                        };
+                    }
+                    return p;
+                })
+            };
+            saveGameState(newState, true); 
+        };
+
+        const resetScores = () => {
+            const newPlayers = gameState.players.map(p => {
+                const oldScore = p.score;
+                const newScore = 0;
+                
+                // Animate score to zero
+                animateScore(`score-${p.id}`, oldScore, newScore);
+
+                return { 
+                    ...p, 
+                    score: newScore, 
+                    wins: 0, 
+                    losses: 0,
+                    status: p.status, 
+                    raisedBalance: 0,
+                    isBlind: gameState.mode === 'blind'
+                };
+            });
+            
+            const newState = { ...gameState, players: newPlayers, lastWinnerId: null };
+            saveGameState(newState, true); 
+            showModal('Scores Reset', 'All player scores, wins, and losses have been set to 0.');
+        };
+
+        const undoLastAction = () => {
+            if (gameState.history.length === 0) {
+                showModal('No History', 'There are no recent actions to undo.');
+                return;
+            }
+            
+            const historyToRestore = JSON.parse(JSON.stringify(gameState.history));
+            const stateToRestore = historyToRestore.pop();
+            
+            const newPlayers = gameState.players.map(p => {
+                const restoredPlayer = stateToRestore.players.find(rp => rp.id === p.id) || p;
+                
+                // Animate score back to the restored score
+                animateScore(`score-${p.id}`, p.score, restoredPlayer.score);
+                
+                return restoredPlayer;
+            });
+
+            const newState = {
+                ...gameState, 
+                baseRate: stateToRestore.baseRate,
+                multiplier: stateToRestore.multiplier,
+                blindMultiplierRate: stateToRestore.blindMultiplierRate, 
+                showCardRate: stateToRestore.showCardRate, 
+                players: newPlayers, 
+                mode: stateToRestore.mode,
+                rankingMode: stateToRestore.rankingMode,
+                history: historyToRestore,
+                lastWinnerId: null 
+            };
+
+            gameState = newState; // Directly set state to avoid calling saveGameState, which calls renderUI too early.
+            renderUI(); // Re-render everything except scores.
+            showModal('Undo Successful', 'The last action has been reverted.');
+        };
+        
+        const toggleMode = (newMode) => {
+            if (newMode === gameState.mode) return;
+            
+            const newPlayers = gameState.players.map(p => ({
+                ...p,
+                raisedBalance: 0, 
+                isBlind: newMode === 'blind' ? true : false 
+            }));
+
+            const newState = { ...gameState, mode: newMode, players: newPlayers, lastWinnerId: null };
+            saveGameState(newState, true); 
+            showModal('Game Mode Switched', `The game is now in ${newMode.toUpperCase()} mode. All round progress has been reset.`);
+        };
+        
+        /**
+         * Calculates and sets the raisedBalance based on the input raise multiplier and BMR.
+         */
+        const updatePlayerRaisedMultiplier = (playerId, multiplier) => {
+            const floatMultiplier = parseFloat(multiplier);
+            if (isNaN(floatMultiplier) || floatMultiplier < 0) return;
+            
+            const newRaisedBalance = floatMultiplier * gameState.blindMultiplierRate;
+
+            const newState = {
+                ...gameState,
+                players: gameState.players.map(p => {
+                    if (p.id === playerId) {
+                        return { ...p, raisedBalance: newRaisedBalance };
+                    }
+                    return p;
+                })
+            };
+            saveGameState(newState, false);
+        };
+
+        /**
+         * Switches player to "Show" status and adds the Show Card Rate (SCR) to their raised balance.
+         */
+        const togglePlayerBlindStatus = (playerId) => {
+            const newState = {
+                ...gameState,
+                players: gameState.players.map(p => {
+                    if (p.id === playerId) {
+                        if (!p.isBlind) return p;
+                        
+                        const finalRaisedBalance = p.raisedBalance + gameState.showCardRate;
+                        
+                        return { ...p, raisedBalance: finalRaisedBalance, isBlind: false }; 
+                    }
+                    return p;
+                })
+            };
+            saveGameState(newState, true); 
+        };
+        
+
+        const handleWin = (winnerId) => {
+            const { players, baseRate, multiplier, mode } = gameState;
+
+            const activePlayers = players.filter(p => p.status === 'active');
+            
+            if (activePlayers.length < 2) {
+                showModal('Not Enough Active Players', 'You need at least two active players (winner + at least one loser) to run a round.');
+                return;
+            }
+            
+            const winner = players.find(p => p.id === winnerId);
+            if (!winner || winner.status !== 'active') {
+                showModal('Invalid Winner', `${winner?.name || 'The selected player'} must be active to win a round.`);
+                return;
+            }
+            
+            let totalPot = 0;
+            let winnerScoreChange = 0;
+            let roundWager = 0;
+            
+            // --- 1. Validation and Pot Calculation ---
+            if (mode === 'blind') {
+                const allInShowMode = activePlayers.every(p => !p.isBlind);
+                if (!allInShowMode) {
+                     showModal('Round Still In Progress', 'In Blind Mode, you must wait until all active players have switched to "Show Card" mode before declaring a winner.');
+                     return;
+                }
+                
+                totalPot = activePlayers.reduce((sum, p) => sum + baseRate + p.raisedBalance, 0);
+                roundWager = baseRate;
+                
+                const winnerContribution = baseRate + winner.raisedBalance;
+                winnerScoreChange = totalPot - winnerContribution; 
+                
+            } else { // Normal Mode Logic
+                roundWager = baseRate * multiplier;
+                const loserCount = activePlayers.length - 1;
+
+                winnerScoreChange = loserCount * roundWager;
+            }
+
+            // --- 2. Calculate New Scores and Run Animation ---
+            
+            const newPlayers = players.map(p => {
+                const oldScore = p.score;
+                let newScore = oldScore;
+
+                if (p.status !== 'active') {
+                    // Suspended player score doesn't change
+                    return p;
+                }
+                
+                // Calculate new score
+                if (p.id === winnerId) {
+                    newScore = oldScore + winnerScoreChange;
+                } else {
+                    const playerContribution = baseRate + p.raisedBalance;
+                    const change = (mode === 'normal') ? -(roundWager) : -(playerContribution);
+                    newScore = oldScore + change;
+                }
+                
+                // *** CRITICAL: Start animation immediately before updating state ***
+                if (oldScore !== newScore) {
+                    animateScore(`score-${p.id}`, oldScore, newScore);
+                }
+
+                // Return the final player state object
+                return { 
+                    ...p, 
+                    score: newScore, 
+                    wins: p.id === winnerId ? p.wins + 1 : p.wins, 
+                    losses: p.id !== winnerId ? p.losses + 1 : p.losses, 
+                    raisedBalance: 0, 
+                    isBlind: mode === 'blind'
+                };
+            });
+
+            // --- 3. Persist the new state and trigger UI update (excluding score values) ---
+            const newState = { ...gameState, players: newPlayers, lastWinnerId: winnerId };
+            saveGameState(newState, true); // This will call renderUI, which must now ignore score values
+
+            const notificationValue = mode === 'normal' ? multiplier : totalPot;
+            showWinNotification(winner.name, newPlayers.find(p => p.id === winnerId).score, roundWager, notificationValue, mode);
+        };
+        
+        // --- Ranking UI Rendering ---
+        function renderRanking() {
+            const rankingContainer = document.getElementById('rankingContainer');
+            const rankBy = gameState.rankingMode;
+            
+            const rankedPlayers = [...gameState.players]
+                .filter(p => p.status === 'active')
+                .sort((a, b) => {
+                    if (rankBy === 'score') {
+                        return b.score - a.score;
+                    } else { 
+                        if (b.wins !== a.wins) return b.wins - a.wins;
+                        return a.losses - b.losses; 
+                    }
+                }); 
+
+            rankingContainer.innerHTML = ''; 
+
+            if (rankedPlayers.length === 0) {
+                 rankingContainer.innerHTML = '<div class="text-center text-gray-500 p-4">No active players to rank.</div>';
+                 return;
+            }
+            
+            rankedPlayers.slice(0, 5).forEach((player, index) => {
+                const rank = index + 1;
+                const scoreClass = player.score >= 0 ? 'text-green-400' : 'text-red-400';
+                
+                let detailDisplay;
+                if (rankBy === 'score') {
+                    detailDisplay = `<p class="text-xs text-gray-400">Score</p>`;
+                } else { 
+                    detailDisplay = `<p class="text-xs text-gray-400">(${player.losses}L)</p>`;
+                }
+
+                const rankElement = document.createElement('div');
+                rankElement.className = `ranking-item p-3 rounded-lg flex items-center justify-between mb-2 transition-colors duration-200`;
+                
+                rankElement.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <span class="text-xl font-extrabold ${rank === 1 ? 'text-yellow-400' : 'text-gray-400'}">#${rank}</span>
+                        <span class="text-lg font-medium">${player.name}</span>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-lg font-bold ${rankBy === 'score' ? scoreClass : 'text-white'}">
+                            ${rankBy === 'score' ? player.score.toFixed(2) : `${player.wins}W`}
+                        </p>
+                        ${detailDisplay}
+                    </div>
+                `;
+                rankingContainer.appendChild(rankElement);
+            });
+        }
+
+
+        // --- Main UI Rendering ---
+
+        /**
+         * Renders the UI state, re-creating player cards and the leaderboard.
+         * Note: Score values are initialized here, but animated separately in handleWin.
+         */
+        function renderUI() {
+            // Settings Card
+            document.getElementById('baseRateInput').value = gameState.baseRate;
+            document.getElementById('blindMultiplierRateInput').value = gameState.blindMultiplierRate;
+            document.getElementById('showCardRateInput').value = gameState.showCardRate;
+            
+            // Mode Indicator Toggle Update
+            document.getElementById('modeNormalOption').classList.toggle('active', gameState.mode === 'normal');
+            document.getElementById('modeBlindOption').classList.toggle('active', gameState.mode === 'blind');
+            
+            // Multiplier Input Update
+            const multiplierControl = document.getElementById('multiplierControl');
+            const blindRateControl = document.getElementById('blindRateControl');
+            
+            document.getElementById('multiplierInput').value = gameState.multiplier; 
+            document.getElementById('multiplierValue').textContent = `${gameState.multiplier}x`; 
+            
+            if (gameState.mode === 'blind') {
+                multiplierControl.classList.add('opacity-50', 'pointer-events-none');
+                blindRateControl.classList.remove('opacity-50', 'pointer-events-none');
+            } else {
+                multiplierControl.classList.remove('opacity-50', 'pointer-events-none');
+                blindRateControl.classList.add('opacity-50', 'pointer-events-none');
+            }
+            
+            const rankingModeSelect = document.getElementById('rankingModeSelect');
+            if (rankingModeSelect) rankingModeSelect.value = gameState.rankingMode;
+            
+            document.getElementById('undoButton').disabled = gameState.history.length === 0;
+
+            // Player List/Scoreboard
+            const playersContainer = document.getElementById('playersContainer');
+            playersContainer.innerHTML = '';
+            
+            const maxScore = gameState.players.reduce((max, p) => Math.max(max, p.score), -Infinity);
+            const leaderId = maxScore > 0 ? gameState.players.find(p => p.score === maxScore)?.id : null;
+
+            let allInShowMode = true;
+            if (gameState.mode === 'blind') {
+                const activePlayers = gameState.players.filter(p => p.status === 'active');
+                allInShowMode = activePlayers.every(p => !p.isBlind);
+                if (activePlayers.length < 2) allInShowMode = false;
+            }
+            
+            gameState.players.forEach(player => {
+                const isActive = player.status === 'active';
+                const isRoundWinner = player.id === gameState.lastWinnerId;
+                
+                // *** CRITICAL FIX: Display the actual current score from the state. 
+                // The animateScore function will manually update this element during the animation. ***
+                const scoreDisplayValue = player.score.toFixed(2);
+                const scoreClass = player.score >= 0 ? 'text-green-400' : 'text-red-400';
+                
+                let statusText = isActive ? 'Active' : 'Suspended';
+                let statusColor = isActive ? 'text-green-500' : 'text-gray-500';
+                
+                if (gameState.mode === 'blind' && isActive) {
+                    statusText = player.isBlind ? 'Blind' : 'Show Card';
+                    statusColor = player.isBlind ? 'text-yellow-500' : 'text-green-500';
+                }
+
+                const suspendButtonText = isActive ? 'Suspend' : 'Activate';
+                const suspendButtonColor = isActive ? 'btn-suspend' : 'btn-secondary';
+                
+                const roundWinnerClass = isRoundWinner ? 'round-winner-highlight' : '';
+
+                const playerElement = document.createElement('div');
+                playerElement.className = `player-score-card p-4 rounded-xl mb-4 flex flex-col md:flex-row items-center justify-between transition-all duration-300 ${!isActive ? 'suspended' : ''} ${roundWinnerClass}`;
+                
+                // --- Blind Mode Controls & Display ---
+                let blindControls = '';
+                if (gameState.mode === 'blind' && isActive) {
+                    
+                    const raiseInputId = `raiseMultiplierInput-${player.id}`;
+                    const BMR = gameState.blindMultiplierRate;
+                    const SCR = gameState.showCardRate;
+
+                    let currentRaiseMultiplier = 0;
+                    let raisedBalanceFromBMR = 0; 
+
+                    if (BMR > 0) {
+                        if (player.isBlind) {
+                            raisedBalanceFromBMR = player.raisedBalance;
+                        } else {
+                            raisedBalanceFromBMR = Math.max(0, player.raisedBalance - SCR);
+                        }
+                        currentRaiseMultiplier = (BMR > 0 && raisedBalanceFromBMR > 0) ? raisedBalanceFromBMR / BMR : 0;
+                    }
+
+                    const currentMultiplierDisplay = Math.max(0, currentRaiseMultiplier).toFixed(0); 
+                    const totalEntry = (gameState.baseRate + player.raisedBalance).toFixed(2);
+                    
+                    blindControls = `
+                        <div class="mt-3 w-full border-t border-gray-700 pt-3">
+                            <!-- RAISED BALANCE TRACKER -->
+                            <p class="text-sm font-mono text-gray-400 mb-3 flex flex-wrap items-center justify-between">
+                                <span class="flex-shrink-0 mb-1">
+                                    Base Entry (R): <span class="text-white font-bold">${gameState.baseRate.toFixed(2)}</span>
+                                </span>
+                                <span class="flex-shrink-0 mb-1">
+                                    Raised Balance: <span class="text-purple-400 font-bold">${raisedBalanceFromBMR.toFixed(2)}</span>
+                                    <span class="text-xs text-gray-500">(${currentMultiplierDisplay}x BMR)</span>
+                                </span>
+                                <span class="flex-shrink-0 text-lg font-extrabold text-blue-400 mb-1">
+                                    Total Entry: ${totalEntry}
+                                </span>
+                            </p>
+                            
+                            ${player.isBlind ? `
+                                <div class="flex space-x-2 items-center">
+                                    <input
+                                        type="number"
+                                        id="${raiseInputId}"
+                                        onchange="window.updatePlayerRaisedMultiplierHandler('${player.id}', this.value)"
+                                        class="p-2 rounded-l-lg bg-gray-700 border border-gray-600 outline-none text-white text-sm min-w-0 flex-grow"
+                                        placeholder="Raise Multiplier (X)"
+                                        min="0"
+                                        step="1"
+                                        value="${currentMultiplierDisplay}"
+                                    />
+                                    <span class="bg-gray-700 text-gray-400 p-2 text-sm">x BMR (${BMR.toFixed(2)})</span>
+                                    <button 
+                                        class="bg-purple-700 hover:bg-purple-600 text-white px-3 py-2 rounded-lg font-medium shadow-md transition-colors text-sm shrink-0" 
+                                        onclick="window.togglePlayerBlindStatusHandler('${player.id}')"
+                                        title="Switches to Show and adds SCR (${SCR.toFixed(2)})"
+                                    >
+                                        Show Card
+                                    </button>
+                                </div>
+                            ` : `
+                                <button class="bg-indigo-900 text-white px-3 py-2 rounded-lg font-medium text-sm w-full opacity-70" disabled>
+                                    Showing Card (Finalized Entry: ${totalEntry})
+                                </button>
+                            `}
+                        </div>
+                    `;
+                }
+                // -----------------------------------
+
+
+                playerElement.innerHTML = `
+                    <div class="flex-1 w-full md:w-auto mb-2 md:mb-0">
+                        <div class="flex items-center">
+                            ${player.id === leaderId ? '<span class="text-yellow-400 text-2xl mr-2">👑</span>' : ''}
+                            <input
+                                type="text"
+                                value="${player.name}"
+                                class="text-lg font-semibold bg-transparent border-b border-gray-600 focus:border-blue-500 outline-none w-full mb-1"
+                                data-id="${player.id}"
+                                onchange="window.updatePlayerNameHandler(this.dataset.id, this.value)"
+                                title="Edit Player Name"
+                            />
+                        </div>
+                        
+                        <p class="text-xs font-mono mb-2 ${statusColor}">Status: ${statusText}</p>
+                        <p class="text-sm text-gray-400 mt-1">Current Score:</p>
+                        <p id="score-${player.id}" class="score-value text-3xl font-extrabold ${scoreClass}">${scoreDisplayValue}</p>
+                        
+                        ${blindControls}
+
+                    </div>
+                    <!-- Player Actions -->
+                    <div class="flex flex-wrap justify-end gap-2 mt-3 md:mt-0 w-full md:w-auto">
+                        <button 
+                            class="btn-primary flex items-center justify-center px-3 py-3 rounded-lg font-medium shadow-md hover:shadow-lg disabled:opacity-50 text-sm" 
+                            onclick="window.handleWinHandler('${player.id}')"
+                            ${!isActive || (gameState.mode === 'blind' && !allInShowMode) ? 'disabled' : ''}
+                            title="${gameState.mode === 'blind' && !allInShowMode ? 'Wait for all players to Show Card' : 'Select as Winner for this round'}"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-2 14.5l-4-4 1.5-1.5 2.5 2.5 7-7 1.5 1.5z"/></svg>
+                            Winner
+                        </button>
+                        <button 
+                            class="${suspendButtonColor} text-white px-3 py-3 rounded-lg font-medium shadow-md hover:shadow-lg transition-colors text-sm"
+                            onclick="window.toggleSuspendHandler('${player.id}')"
+                            title="${suspendButtonText} Player (Preserves score for later)"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><path d="M8 7v-3a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v3m-2 0h-4m-7 5v-1.5a2.5 2.5 0 0 1 5 0v1.5m1.5 -1.5a2.5 2.5 0 0 1 5 0v1.5m-11 4a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7a2 2 0 0 0 -2 -2h-10a2 2 0 0 0 -2 2z"/></svg>
+                            ${suspendButtonText}
+                        </button>
+                        <button 
+                            class="bg-red-600 hover:bg-red-700 text-white h-10 w-10 p-2 rounded-lg shadow-md hover:shadow-lg transition-colors flex items-center justify-center"
+                            onclick="window.removePlayerHandler('${player.id}')"
+                            title="Remove Player (Action is undoable)"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                            
+                        </button>
+                    </div>
+                `;
+                playersContainer.appendChild(playerElement);
+            });
+            
+            renderRanking();
+        }
+
+        // --- Modal Implementation (Unchanged) ---
+        function showModal(title, message) {
+            const modal = document.getElementById('appModal');
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalMessage').textContent = message;
+            modal.classList.remove('hidden');
+        }
+
+        function hideModal() {
+            document.getElementById('appModal').classList.add('hidden');
+        }
+        
+        // --- Animated Win Notification Implementation (Unchanged) ---
+        let notificationTimeout;
+
+        function showWinNotification(winnerName, newScore, wager, notificationValue, mode) {
+            clearTimeout(notificationTimeout);
+            
+            const notificationEl = document.getElementById('winNotification');
+            const headerEl = document.getElementById('notificationHeader');
+            const messageEl = document.getElementById('notificationMessage');
+            const detailsEl = document.getElementById('notificationDetails');
+            
+            let headerText;
+            let congratsMessage;
+            let bgColor;
+            
+            if (mode === 'normal') {
+                const multiplier = notificationValue;
+                
+                if (multiplier >= 10) {
+                    headerText = `🔥 EXTREME RUSH! ${winnerName}! (x${multiplier})`;
+                    congratsMessage = `You're on fire! That incredible multiplier propelled your balance to ${newScore.toFixed(2)}!`;
+                    bgColor = 'bg-red-700/95';
+                } else if (multiplier >= 5) {
+                    headerText = `💰 JACKPOT! ${winnerName} takes the pile! (x${multiplier})`;
+                    congratsMessage = `A monster win with the x${multiplier} multiplier! Your new balance is a huge ${newScore.toFixed(2)}!`;
+                    bgColor = 'bg-yellow-600/95';
+                } else if (multiplier >= 3) {
+                    headerText = `💥 GREAT VICTORY! ${winnerName}! (x${multiplier})`;
+                    congratsMessage = `A powerful round! The x${multiplier} multiplier gives you a strong score of ${newScore.toFixed(2)}.`;
+                    bgColor = 'bg-blue-600/95';
+                } else if (multiplier === 2) {
+                    headerText = `✅ DOUBLE THE FUN! ${winnerName}! (x2)`;
+                    congratsMessage = `Scored double the base rate, boosting your balance to ${newScore.toFixed(2)}.`;
+                    bgColor = 'bg-purple-600/95';
+                } else { 
+                    headerText = `⭐ ROUND WINNER: ${winnerName}! (x1)`;
+                    congratsMessage = `A steady win for ${winnerName}! Current balance: ${newScore.toFixed(2)}.`;
+                    bgColor = 'bg-green-700/95';
+                }
+                detailsEl.innerHTML = `Wager: <span class="font-bold text-white">${wager.toFixed(2)}</span> | New Balance: <span class="font-bold text-white">${newScore.toFixed(2)}</span>`;
+                
+            } else { // Blind Mode Logic
+                const totalPot = notificationValue;
+                const winnerObj = gameState.players.find(p => p.name === winnerName);
+                // Need to find the contribution *before* it was reset to 0 in handleWin
+                const winnerContribution = gameState.players.find(p => p.id === winnerObj.id).raisedBalance + gameState.baseRate; 
+                const netGain = totalPot - winnerContribution;
+
+                headerText = `♠️ BLIND POT CLEARED! ${winnerName}!`;
+                congratsMessage = `Secured the Total Pot of ${totalPot.toFixed(2)}! Your net gain was ${netGain.toFixed(2)}. New balance: ${newScore.toFixed(2)}.`;
+                bgColor = 'bg-indigo-700/95';
+                detailsEl.innerHTML = `Base Entry: <span class="font-bold text-white">${wager.toFixed(2)}</span> | Total Pot: <span class="font-bold text-white">${totalPot.toFixed(2)}</span> | New Balance: <span class="font-bold text-white">${newScore.toFixed(2)}</span>`;
+            }
+
+
+            // 2. Update Content and Style
+            notificationEl.className = `fixed top-0 left-1/2 transform -translate-x-1/2 mt-4 z-50 p-4 rounded-xl shadow-2xl transition-all duration-500 text-white ${bgColor}`;
+            headerEl.textContent = headerText;
+            messageEl.textContent = congratsMessage;
+
+            // 3. Trigger Animation
+            notificationEl.classList.remove('hidden', 'notification-hidden');
+            notificationEl.classList.add('notification-active');
+
+            // 4. Hide after 5 seconds
+            notificationTimeout = setTimeout(() => {
+                notificationEl.classList.remove('notification-active');
+                notificationEl.classList.add('notification-hidden');
+                
+                setTimeout(() => {
+                    notificationEl.classList.add('hidden');
+                }, 500);
+            }, 5000);
+        }
+
+        // --- Expose handlers to global scope for inline HTML event listeners ---
+        window.updateBaseRateHandler = (value) => updateBaseRate(value);
+        window.updateMultiplierHandler = (value) => {
+            updateMultiplier(value);
+            const displayValue = parseInt(value, 10);
+            document.getElementById('multiplierValue').textContent = `${!isNaN(displayValue) && displayValue >= 1 ? displayValue : (value || 1)}x`;
+        };
+        window.updateBlindMultiplierRateHandler = (value) => updateBlindMultiplierRate(value);
+        window.updateShowCardRateHandler = (value) => updateShowCardRate(value);
+        window.updatePlayerRaisedMultiplierHandler = (id, amount) => updatePlayerRaisedMultiplier(id, amount);
+        window.updateRankingModeHandler = (value) => updateRankingMode(value);
+        
+        window.addPlayerHandler = () => {
+            const input = document.getElementById('newPlayerName');
+            const name = input.value.trim() || `Player ${gameState.players.length + 1}`;
+            addPlayer(name);
+            input.value = '';
+        };
+        window.removePlayerHandler = (id) => removePlayer(id);
+        window.updatePlayerNameHandler = (id, newName) => updatePlayerName(id, newName);
+        window.handleWinHandler = (id) => handleWin(id);
+        window.resetScoresHandler = () => resetScores();
+        window.toggleSuspendHandler = (id) => toggleSuspend(id);
+        window.undoLastActionHandler = () => undoLastAction();
+        window.hideModal = hideModal;
+        window.toggleModeHandler = (mode) => toggleMode(mode);
+        window.togglePlayerBlindStatusHandler = (id) => togglePlayerBlindStatus(id);
+
+
+        // --- Initialize on load ---
+        window.onload = renderUI;
+    </script>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-blue-400 mb-2">KHELAU TAAS</h1>
+            <p class="text-gray-400">Score and Wager Tracker</p>
+        </header>
+        
+        <!-- Mode Toggle Switch (New Visual Feature) -->
+        <div class="mode-toggle mb-8">
+            <div id="modeNormalOption" 
+                 class="mode-option mode-normal"
+                 onclick="window.toggleModeHandler('normal')"
+                 title="Normal Mode: Wager = Base Rate x Multiplier (M)"
+            >
+                Normal Mode 
+            </div>
+            <div id="modeBlindOption" 
+                 class="mode-option mode-blind"
+                 onclick="window.toggleModeHandler('blind')"
+                 title="Blind Mode: Entry = Base Rate + Raised Balance (BMR + SCR)"
+            >
+                Blind Mode 
+            </div>
+        </div>
+
+
+        <!-- Configuration Card -->
+        <div class="card p-6 rounded-2xl mb-8">
+            <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">Game Settings</h2>
+
+            <div class="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0 mb-6">
+                
+                <!-- Base Rate -->
+                <div class="flex-1">
+                    <label for="baseRateInput" class="block text-sm font-medium mb-2">Base Entry Rate (R)</label>
+                    <input
+                        type="number"
+                        id="baseRateInput"
+                        onchange="window.updateBaseRateHandler(this.value)"
+                        class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 focus:ring-blue-500 focus:border-blue-500 text-white"
+                        placeholder="Enter Base Rate"
+                        min="0"
+                        value="10"
+                    />
+                </div>
+
+                <!-- Multiplier Input (Normal Mode) -->
+                <div id="multiplierControl" class="flex-1 transition-opacity duration-300">
+                    <label for="multiplierInput" class="block text-sm font-medium mb-2">Normal Mode Multiplier (M): <span id="multiplierValue" class="font-bold text-green-400">1x</span></label>
+                    <input
+                        type="number"
+                        id="multiplierInput"
+                        onchange="window.updateMultiplierHandler(this.value)"
+                        class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 focus:ring-blue-500 focus:border-blue-500 text-white"
+                        placeholder="Enter Multiplier (e.g., 2, 4, 10)"
+                        min="1"
+                        step="1"
+                        value="1"
+                    />
+                </div>
+            </div>
+            
+            <!-- Blind Mode Rate Controls -->
+            <div id="blindRateControl" class="transition-opacity duration-300">
+                <h3 class="text-lg font-semibold text-purple-400 mb-3 border-t border-gray-700 pt-3">Blind Mode Raising Settings</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="flex-1">
+                        <label for="blindMultiplierRateInput" class="block text-sm font-medium mb-2">Blind Multiplier Rate (BMR)</label>
+                        <input
+                            type="number"
+                            id="blindMultiplierRateInput"
+                            onchange="window.updateBlindMultiplierRateHandler(this.value)"
+                            class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 focus:ring-purple-500 focus:border-purple-500 text-white"
+                            placeholder="Blind Multiplier Rate"
+                            min="0"
+                            value="5"
+                        />
+                        <p class="text-xs text-gray-400 mt-1">Amount added per raise factor.</p>
+                    </div>
+                    <div class="flex-1">
+                        <label for="showCardRateInput" class="block text-sm font-medium mb-2">Show Card Additive Rate (SCR)</label>
+                        <input
+                            type="number"
+                            id="showCardRateInput"
+                            onchange="window.updateShowCardRateHandler(this.value)"
+                            class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 focus:ring-purple-500 focus:border-purple-500 text-white"
+                            placeholder="Show Card Additive Rate"
+                            min="0"
+                            value="10"
+                        />
+                        <p class="text-xs text-gray-400 mt-1">Added when player flips to "Show Card".</p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+
+        <!-- Player Management Card -->
+        <div class="card p-6 rounded-2xl mb-8">
+            <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">Player Actions</h2>
+
+            <div class="flex space-x-3 mb-6">
+                <input
+                    type="text"
+                    id="newPlayerName"
+                    class="flex-1 p-3 rounded-lg bg-gray-800 border border-gray-700 focus:ring-blue-500 focus:border-blue-500 text-white"
+                    placeholder="New Player Name"
+                    maxlength="20"
+                />
+                <button
+                    onclick="window.addPlayerHandler()"
+                    class="btn-secondary px-6 py-3 rounded-lg font-medium shadow-md hover:shadow-lg flex items-center shrink-0"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><path d="M12 5v14M5 12h14"/></svg>
+                    Add Player
+                </button>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <button
+                    id="undoButton"
+                    onclick="window.undoLastActionHandler()"
+                    class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium w-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                    disabled
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1"><path d="M12 2v10l-4 -4m4 4l4 -4m-8 -12a10 10 0 1 0 10 10v-3.5"/></svg>
+                    Undo Last
+                </button>
+                <button
+                    onclick="window.resetScoresHandler()"
+                    class="bg-red-700 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium w-full transition-colors text-sm"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1"><path d="M3 3v18h18M3 15h14M3 9h10"/></svg>
+                    Reset Scores
+                </button>
+                <div class="col-span-2 md:col-span-2">
+                    <!-- Placeholder for layout spacing -->
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Scoreboard and Winner Selection -->
+        <div class="card p-6 rounded-2xl">
+            <h2 class="text-2xl font-bold mb-6 text-white border-b border-gray-700 pb-2">Player Scoreboard</h2>
+
+            <div id="playersContainer">
+                <div class="text-center text-gray-500 p-8">Add players above to start the game!</div>
+            </div>
+        </div>
+        
+        <!-- Ranking Card (NEW) -->
+        <div class="card p-6 rounded-2xl mt-8">
+            <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-4">
+                <h2 class="text-2xl font-bold text-white">Top 5 Leaderboard</h2>
+                <div>
+                    <label for="rankingModeSelect" class="text-sm font-medium mr-2 text-gray-400">Rank By:</label>
+                    <select 
+                        id="rankingModeSelect"
+                        onchange="window.updateRankingModeHandler(this.value)"
+                        class="p-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-sm"
+                    >
+                        <option value="score">Score (Balance)</option>
+                        <option value="wins">Wins (and Losses)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div id="rankingContainer">
+                <div class="text-center text-gray-500 p-4">Loading leaderboard...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Custom Modal for Messages (Unchanged) -->
+    <div id="appModal" class="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center hidden transition-opacity duration-300">
+        <div class="bg-gray-800 p-6 rounded-xl shadow-2xl max-w-sm w-full border border-gray-700 transform transition-transform duration-300 scale-95 md:scale-100">
+            <h3 id="modalTitle" class="text-xl font-bold mb-4 text-blue-400">Modal Title</h3>
+            <p id="modalMessage" class="text-gray-300 mb-6">Modal Message</p>
+            <button onclick="window.hideModal()" class="btn-secondary w-full py-2 rounded-lg font-semibold">
+                Got It
+            </button>
+        </div>
+    </div>
+    
+    <!-- Win Notification Pop-up (Unchanged) -->
+    <div id="winNotification" class="fixed top-0 left-1/2 transform -translate-x-1/2 mt-4 z-50 p-4 rounded-xl shadow-2xl hidden" style="min-width: 300px;">
+        <div id="notificationHeader" class="text-lg font-bold mb-1"></div>
+        <div id="notificationMessage" class="text-sm text-gray-200"></div>
+        <div id="notificationDetails" class="text-xs text-gray-400 mt-2"></div>
+    </div>
+
+</body>
+</html>
